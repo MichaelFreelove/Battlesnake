@@ -34,7 +34,7 @@ def info() -> typing.Dict:
 
   # start is called when your Battlesnake begins a game
 def start(game_state: typing.Dict):
-    print("GAME START")
+    print("GAME STARTED")
 
 
 
