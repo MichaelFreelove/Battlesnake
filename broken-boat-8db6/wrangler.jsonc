@@ -1,0 +1,12 @@
+{
+	"name" : "battlesnake-worker",
+	"compatibility_date" : "2025-03-24",
+	"main" : "main.py", 
+	"type" : "python",  
+	"workers_dev" : true,
+
+	"compatibility_flags": ["python_workers"],
+	"observability": {
+		"enabled": true
+	}
+}

@@ -1,0 +1,6 @@
+# filepath: c:\Users\micha\Python Projects\BattleSnake\wrangler.toml
+name = "battlesnake-worker"
+compatibility_date = "2025-03-24"
+main = "main.py"  # Entry point for your Worker script
+type = "python"   # Specify the runtime type (use "python" for Python-based Workers)
+workers_dev = true

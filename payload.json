@@ -1,0 +1,35 @@
+import requests
+
+payload = {
+    "game": {"id": "game-id"},
+    "turn": 1,
+    "board": {
+        "height": 11,
+        "width": 11,
+        "food": [{"x": 5, "y": 5}],
+        "snakes": [
+            {
+                "id": "snake-id",
+                "name": "My Battlesnake",
+                "health": 100,
+                "body": [{"x": 0, "y": 0}, {"x": 0, "y": 1}, {"x": 0, "y": 2}],
+                "head": {"x": 0, "y": 0},
+                "length": 3
+            }
+        ]
+    },
+    "you": {
+        "id": "snake-id",
+        "name": "My Battlesnake",
+        "health": 100,
+        "body": [{"x": 0, "y": 0}, {"x": 0, "y": 1}, {"x": 0, "y": 2}],
+        "head": {"x": 0, "y": 0},
+        "length": 3
+    }
+}
+
+response = requests.post(
+    "https://battlesnake-rjm9jy11w-michael-freeloves-projects.vercel.app/move",
+    json=payload
+)
+print(response.json())

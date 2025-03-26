@@ -12,41 +12,31 @@
 
 import random
 import typing
-import curses
-from curses import wrapper
 import queue
 import time
+import os
+from flask import Flask, request, jsonify
 
-# info is called when you create your Battlesnake on play.battlesnake.com
-# and controls your Battlesnake's appearance
-# TIP: If you open your Battlesnake URL in a browser you should see this data
-def info() -> typing.Dict:
-    print("INFO")
+app = Flask(__name__)
 
-    return {
+@app.route("/info", methods=["GET"])
+def info():
+    return jsonify({
         "apiversion": "1",
-        "author": "",  # TODO: Your Battlesnake Username
-        "color": "#888888",  # TODO: Choose color
-        "head": "missle",  # TODO: Choose head
-        "tail": "default",  # TODO: Choose tail
-    }
+        "author": "YourUsername",  # Add your username
+        "color": "#FF5733",       # Choose a custom color
+        "head": "beluga",         # Choose a custom head
+        "tail": "round-bum",      # Choose a custom tail
+    })
 
-
-# start is called when your Battlesnake begins a game
-def start(game_state: typing.Dict):
+@app.route("/start", methods=["POST"])
+def start():
     print("GAME STARTED")
+    return "ok"
 
-
-# end is called when your Battlesnake finishes a game
-def end(game_state: typing.Dict):
-    print("GAME OVER\n")
-
-
-# move is called on every turn and returns your next move
-# Valid moves are "up", "down", "left", or "right"
-# See https://docs.battlesnake.com/api/example-move for available data
-
-def move(game_state: typing.Dict) -> typing.Dict:
+@app.route("/move", methods=["POST"])
+def move():
+    game_state = request.get_json()
     is_move_safe = {"up": True, "down": True, "left": True, "right": True}
 
     my_head = game_state["you"]["body"][0]  # Coordinates of your head
@@ -264,7 +254,7 @@ def move(game_state: typing.Dict) -> typing.Dict:
     ### BFS Pathfinding ###
     ####################
     def bfs_path(start, target, maze):
-        """
+        """        https://battlesnake-r7i5hrftf-michael-freeloves-projects.vercel.app/info
         Perform BFS to find the shortest path from start to target in the maze.
         :param start: Tuple (x, y) representing the starting position.
         :param target: Tuple (x, y) representing the target position.
@@ -403,7 +393,7 @@ def move(game_state: typing.Dict) -> typing.Dict:
 
     if len(safe_moves) == 0:
         print(f"MOVE {game_state['turn']}: No safe moves detected! Moving down")
-        return {"move": "down"}
+        return jsonify({"move": "down"})
 
     if target_snake < 999:
         print("Killing: " + opponents[opponent_number]["name"])
@@ -447,16 +437,13 @@ def move(game_state: typing.Dict) -> typing.Dict:
         next_move = random.choice(safe_moves)
 
     print(f"MOVE {game_state['turn']}: {next_move}")
-    return {"move": next_move}
+    return jsonify({"move": next_move})
 
+@app.route("/end", methods=["POST"])
+def end():
+    print("GAME OVER")
+    return "ok"
 
-# Start server when `python main.py` is run
 if __name__ == "__main__":
-    from server import run_server
-
-    run_server({
-        "info": info,
-        "start": start,
-        "move": move,
-        "end": end
-    })
+    port = int(os.environ.get("PORT", 8000))  # Use the PORT environment variable or default to 8000
+    app.run(host="0.0.0.0", port=port)
