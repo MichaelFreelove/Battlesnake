@@ -203,6 +203,9 @@ def handle_standard_logic(game_state):
     def in_bounds(x, y):
         return 0 <= x < board_width and 0 <= y < board_height
 
+    def manhattan_distance(start, target):
+        return abs(start["x"] - target["x"]) + abs(start["y"] - target["y"])
+
     def opponent_legal_next_moves(opponent):
         opponent_head = opponent["body"][0]
         occupied_positions = set()
@@ -327,7 +330,101 @@ def handle_standard_logic(game_state):
 
         return score
 
-    def score_safe_moves():
+    def food_urgency_score(health):
+        if health < 25:
+            return 200
+        if health <= 50:
+            return 100
+        return 25
+
+    def enemy_can_contest_food(food):
+        my_distance = manhattan_distance(my_head, food)
+
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+            if len(opponent["body"]) < my_length:
+                continue
+
+            opponent_head = opponent["body"][0]
+            opponent_distance = manhattan_distance(opponent_head, food)
+            if opponent_distance <= my_distance:
+                return True
+
+        return False
+
+    def score_food_target(food, health):
+        if maze[food["y"] + 1][food["x"] + 1] != "X":
+            print(f"Ignoring food at {food}: marked unsafe on maze")
+            return None
+
+        distance = manhattan_distance(my_head, food)
+        reachable_cells = count_reachable_space(food["x"], food["y"])
+        reachable_space = len(reachable_cells)
+        available_exits = count_available_exits(food["x"], food["y"])
+        contested_cells = estimate_contested_territory(reachable_cells, food["x"], food["y"])
+        contested_food = enemy_can_contest_food(food)
+
+        urgency = food_urgency_score(health)
+        score = urgency
+        score += min(reachable_space, board_width * board_height)
+        score -= distance * 8
+        score -= contested_cells * 2
+
+        if contested_food:
+            score -= 120
+        if reachable_space < my_length + 2:
+            score -= (my_length + 2 - reachable_space) * 80
+        if available_exits <= 1:
+            score -= 90
+        elif available_exits >= 3:
+            score += 30
+        if health > 50 and (contested_food or available_exits <= 1 or reachable_space < my_length * 2):
+            score -= 100
+
+        food_details = {
+            "distance": distance,
+            "urgency": urgency,
+            "reachable": reachable_space,
+            "contested_cells": contested_cells,
+            "enemy_contested": contested_food,
+            "exits": available_exits,
+            "score": score
+        }
+        print(f"Food score for {food}: {food_details}")
+
+        return score
+
+    def choose_food_target(health):
+        scored_food = {}
+        best_food = None
+        best_score = None
+
+        for food in food_pellets:
+            score = score_food_target(food, health)
+            if score is None:
+                continue
+
+            food_key = (food["x"], food["y"])
+            scored_food[food_key] = score
+            if best_score is None or score > best_score:
+                best_food = food
+                best_score = score
+
+        if best_food is None:
+            print("No food target selected: no safe food scored well enough")
+            return None, scored_food
+        if health > 50 and best_score < 80:
+            print(f"Ignoring food at {best_food}: high health and low food score {best_score}")
+            return None, scored_food
+
+        print(f"Chosen food target: {best_food} with score {best_score}")
+        return best_food, scored_food
+
+    def score_safe_moves(food_scores=None):
+        if food_scores is None:
+            food_scores = {}
+
         move_scores = {}
         for move, is_safe in is_move_safe.items():
             if not is_safe:
@@ -342,6 +439,8 @@ def handle_standard_logic(game_state):
                 continue
 
             move_scores[move] = evaluate_territory_quality(move, next_x, next_y)
+            if (next_x, next_y) in food_scores:
+                move_scores[move] += food_scores[(next_x, next_y)] * 0.25
 
         return move_scores
 
@@ -369,7 +468,6 @@ def handle_standard_logic(game_state):
                 continue  # Skip your own snake
 
             opponent_length = len(opponent["body"])
-            my_length = len(my_body)
 
             if opponent_length < my_length:  # Only target shorter snakes
                 opponent_head = opponent["body"][0]
@@ -391,28 +489,9 @@ def handle_standard_logic(game_state):
 
     if not target_enemy:
         # Default to food targeting if no enemy target is found
-        def find_valid_food():
-            valid_food = []
-            for food in food_pellets:
-                if maze[food["y"] + 1][food["x"] + 1] == "X":  # Only consider valid food spaces
-                    valid_food.append(food)
-            return valid_food
-
-        valid_food_pellets = find_valid_food()
-
-        def find_closest_valid_food():
-            if not valid_food_pellets:
-                return None  # No valid food available
-            min_dist = float("inf")
-            closest_food = None
-            for food in valid_food_pellets:
-                dist = abs(my_head["x"] - food["x"]) + abs(my_head["y"] - food["y"])
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_food = food
-            return closest_food
-
-        target_food = find_closest_valid_food()
+        target_food, food_scores = choose_food_target(my_health)
+    else:
+        food_scores = {}
 
     ####################
     ### Mark Target on Maze ###
@@ -422,7 +501,7 @@ def handle_standard_logic(game_state):
     elif target_food:
         maze[target_food["y"] + 1][target_food["x"] + 1] = "T"
 
-    move_scores = score_safe_moves()
+    move_scores = score_safe_moves(food_scores)
     print(f"Standard Move {game_state['turn']} Scores: {move_scores}")
 
     ####################
