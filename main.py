@@ -501,7 +501,7 @@ def end():
 
 @app.route("/", methods=["GET"])
 def root():
-    return "Battlesnake server is running!", 200
+    return info()
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))  # Use the PORT environment variable or default to 8000
