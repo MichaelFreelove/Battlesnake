@@ -67,6 +67,7 @@ def handle_standard_logic(game_state):
     board_width = game_state["board"]["width"]
     opponents = game_state["board"]["snakes"]
     food_pellets = game_state["board"]["food"]
+    my_tail = my_body[-1]
 
     ####################
     ### Initialize Maze ###
@@ -206,6 +207,42 @@ def handle_standard_logic(game_state):
     def manhattan_distance(start, target):
         return abs(start["x"] - target["x"]) + abs(start["y"] - target["y"])
 
+    def get_next_position(move):
+        dx, dy = directions[move]
+        return my_head["x"] + dx, my_head["y"] + dy
+
+    def will_eat_after_move(next_x, next_y):
+        for food in food_pellets:
+            if food["x"] == next_x and food["y"] == next_y:
+                return True
+
+        return False
+
+    def is_own_tail_safe(next_x, next_y):
+        return (
+            next_x == my_tail["x"]
+            and next_y == my_tail["y"]
+            and not will_eat_after_move(next_x, next_y)
+        )
+
+    def build_blocked_cells(open_tail=False):
+        blocked_cells = set()
+
+        for segment in my_body[1:]:
+            if open_tail and segment["x"] == my_tail["x"] and segment["y"] == my_tail["y"]:
+                continue
+
+            blocked_cells.add(position_key(segment))
+
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+
+            for segment in opponent["body"]:
+                blocked_cells.add(position_key(segment))
+
+        return blocked_cells
+
     def opponent_legal_next_moves(opponent):
         opponent_head = opponent["body"][0]
         occupied_positions = set()
@@ -250,18 +287,26 @@ def handle_standard_logic(game_state):
     head_danger_scores = enemy_head_danger_scores()
     print(f"Enemy Head Danger Scores: {head_danger_scores}")
 
-    def count_reachable_space(start_x, start_y):
+    def is_passable_for_fill(x, y, blocked_cells, open_tail=False):
+        is_open_tail = open_tail and x == my_tail["x"] and y == my_tail["y"]
+
+        return (
+            in_bounds(x, y)
+            and (x, y) not in blocked_cells
+            and (maze[y + 1][x + 1] in passable_cells or is_open_tail)
+        )
+
+    def count_reachable_space(start_x, start_y, open_tail=False):
         visited = set()
         fill_queue = queue.Queue()
         fill_queue.put((start_x, start_y))
+        blocked_cells = build_blocked_cells(open_tail)
 
         while not fill_queue.empty():
             x, y = fill_queue.get()
             if (x, y) in visited:
                 continue
-            if not (0 <= x < board_width and 0 <= y < board_height):
-                continue
-            if maze[y + 1][x + 1] not in passable_cells:
+            if not is_passable_for_fill(x, y, blocked_cells, open_tail):
                 continue
 
             visited.add((x, y))
@@ -271,12 +316,14 @@ def handle_standard_logic(game_state):
 
         return visited
 
-    def count_available_exits(x, y):
+    def count_available_exits(x, y, open_tail=False):
         exits = 0
+        blocked_cells = build_blocked_cells(open_tail)
+
         for dx, dy in directions.values():
             next_x = x + dx
             next_y = y + dy
-            if in_bounds(next_x, next_y) and maze[next_y + 1][next_x + 1] in passable_cells:
+            if is_passable_for_fill(next_x, next_y, blocked_cells, open_tail):
                 exits += 1
 
         return exits
@@ -302,9 +349,15 @@ def handle_standard_logic(game_state):
         return contested_cells
 
     def evaluate_territory_quality(move, next_x, next_y):
-        reachable_cells = count_reachable_space(next_x, next_y)
+        open_tail = not will_eat_after_move(next_x, next_y)
+        if is_own_tail_safe(next_x, next_y):
+            print(f"Move {move} can safely move into my tail at {(next_x, next_y)} because the tail should move away.")
+        elif open_tail:
+            print(f"Move {move} can use my tail at {(my_tail['x'], my_tail['y'])} as open escape space.")
+
+        reachable_cells = count_reachable_space(next_x, next_y, open_tail)
         reachable_space = len(reachable_cells)
-        available_exits = count_available_exits(next_x, next_y)
+        available_exits = count_available_exits(next_x, next_y, open_tail)
         contested_cells = estimate_contested_territory(reachable_cells, next_x, next_y)
         danger_penalty = head_danger_scores.get((next_x, next_y), 0)
 
@@ -324,6 +377,7 @@ def handle_standard_logic(game_state):
             "contested": contested_cells,
             "exits": available_exits,
             "danger_penalty": danger_penalty,
+            "tail_open": open_tail,
             "score": score
         }
         print(f"Territory score for {move}: {territory_details}")
@@ -427,14 +481,18 @@ def handle_standard_logic(game_state):
 
         move_scores = {}
         for move, is_safe in is_move_safe.items():
+            next_x, next_y = get_next_position(move)
+            if not is_safe and is_own_tail_safe(next_x, next_y):
+                is_safe = True
+                print(f"Move {move} re-opened as safe because it follows my moving tail.")
+
             if not is_safe:
                 move_scores[move] = unsafe_score
                 continue
 
-            dx, dy = directions[move]
-            next_x = my_head["x"] + dx
-            next_y = my_head["y"] + dy
-            if maze[next_y + 1][next_x + 1] not in immediate_move_cells:
+            if is_own_tail_safe(next_x, next_y):
+                print(f"Move {move} is allowed to use my current tail square.")
+            elif maze[next_y + 1][next_x + 1] not in immediate_move_cells:
                 move_scores[move] = unsafe_score
                 continue
 
