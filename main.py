@@ -399,28 +399,57 @@ def handle_standard_logic(game_state):
 
         return exits
 
-    def evaluate_cutoff_opportunity(opponent, next_x, next_y):
-        current_territory = estimate_enemy_territory(opponent)
-        candidate_territory = estimate_enemy_territory(opponent, {(next_x, next_y)})
-        current_exits = detect_narrow_corridors(opponent)
-        candidate_exits = detect_narrow_corridors(opponent, {(next_x, next_y)})
-        territory_reduction = len(current_territory) - len(candidate_territory)
-        exit_reduction = current_exits - candidate_exits
+    def build_weak_enemy_profiles():
+        profiles = []
 
-        cutoff_score = max(0, territory_reduction) * 2
-        if exit_reduction > 0:
-            cutoff_score += exit_reduction * 35
-        if candidate_exits <= 1:
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+            if len(opponent["body"]) >= my_length:
+                continue
+
+            territory = estimate_enemy_territory(opponent)
+            exits = detect_narrow_corridors(opponent)
+            profile = {
+                "opponent": opponent,
+                "territory": territory,
+                "exits": exits,
+                "legal_moves": set(opponent_legal_next_moves(opponent))
+            }
+            profiles.append(profile)
+            print(f"Enemy territory estimate for {opponent['id']}: {{'territory': {len(territory)}, 'exits': {exits}}}")
+
+        return profiles
+
+    weak_enemy_profiles = build_weak_enemy_profiles()
+
+    def evaluate_cutoff_opportunity(enemy_profile, next_x, next_y):
+        opponent = enemy_profile["opponent"]
+        current_territory = enemy_profile["territory"]
+        current_exits = enemy_profile["exits"]
+        legal_moves = enemy_profile["legal_moves"]
+        move_position = (next_x, next_y)
+        enemy_head = opponent["body"][0]
+        distance_to_enemy = abs(next_x - enemy_head["x"]) + abs(next_y - enemy_head["y"])
+
+        cutoff_score = 0
+        if move_position in current_territory:
+            cutoff_score += 15
+        if move_position in legal_moves:
             cutoff_score += 45
-        if len(candidate_territory) < len(opponent["body"]) * 2:
-            cutoff_score += 55
+        if distance_to_enemy <= 2:
+            cutoff_score += max(0, 25 - distance_to_enemy * 8)
+        if current_exits <= 2 and move_position in current_territory:
+            cutoff_score += 35
+        if len(current_territory) < len(opponent["body"]) * 3:
+            cutoff_score += 35
 
         cutoff_details = {
             "opponent": opponent.get("name", opponent["id"]),
             "current_territory": len(current_territory),
-            "candidate_territory": len(candidate_territory),
             "current_exits": current_exits,
-            "candidate_exits": candidate_exits,
+            "candidate_blocks_escape": move_position in legal_moves,
+            "distance": distance_to_enemy,
             "score": cutoff_score
         }
         print(f"Cutoff opportunity for {opponent['id']}: {cutoff_details}")
@@ -436,13 +465,9 @@ def handle_standard_logic(game_state):
             return 0
 
         aggression_score = 0
-        for opponent in opponents:
-            if opponent["id"] == game_state["you"]["id"]:
-                continue
-            if len(opponent["body"]) >= my_length:
-                continue
-
-            cutoff_score = evaluate_cutoff_opportunity(opponent, next_x, next_y)
+        for enemy_profile in weak_enemy_profiles:
+            opponent = enemy_profile["opponent"]
+            cutoff_score = evaluate_cutoff_opportunity(enemy_profile, next_x, next_y)
             distance_to_enemy = abs(next_x - opponent["body"][0]["x"]) + abs(next_y - opponent["body"][0]["y"])
             pressure_bonus = max(0, 20 - distance_to_enemy * 5)
             aggression_score += cutoff_score + pressure_bonus
