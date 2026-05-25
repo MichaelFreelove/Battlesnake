@@ -195,6 +195,7 @@ def handle_standard_logic(game_state):
     passable_cells = [" ", "X", "T"]
     immediate_move_cells = passable_cells + ["."]
     my_length = len(my_body)
+    unsafe_score = -100000
 
     def position_key(position):
         return (position["x"], position["y"])
@@ -246,11 +247,10 @@ def handle_standard_logic(game_state):
     head_danger_scores = enemy_head_danger_scores()
     print(f"Enemy Head Danger Scores: {head_danger_scores}")
 
-    def flood_fill_space(start_x, start_y):
+    def count_reachable_space(start_x, start_y):
         visited = set()
         fill_queue = queue.Queue()
         fill_queue.put((start_x, start_y))
-        free_space = 0
 
         while not fill_queue.empty():
             x, y = fill_queue.get()
@@ -262,35 +262,91 @@ def handle_standard_logic(game_state):
                 continue
 
             visited.add((x, y))
-            free_space += 1
 
             for dx, dy in directions.values():
                 fill_queue.put((x + dx, y + dy))
 
-        return free_space
+        return visited
+
+    def count_available_exits(x, y):
+        exits = 0
+        for dx, dy in directions.values():
+            next_x = x + dx
+            next_y = y + dy
+            if in_bounds(next_x, next_y) and maze[next_y + 1][next_x + 1] in passable_cells:
+                exits += 1
+
+        return exits
+
+    def estimate_contested_territory(reachable_cells, start_x, start_y):
+        contested_cells = 0
+        larger_or_equal_next_moves = []
+
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+            if len(opponent["body"]) >= my_length:
+                larger_or_equal_next_moves.extend(opponent_legal_next_moves(opponent))
+
+        for cell_x, cell_y in reachable_cells:
+            my_distance = abs(start_x - cell_x) + abs(start_y - cell_y)
+            for enemy_x, enemy_y in larger_or_equal_next_moves:
+                enemy_distance = abs(enemy_x - cell_x) + abs(enemy_y - cell_y)
+                if enemy_distance <= my_distance:
+                    contested_cells += 1
+                    break
+
+        return contested_cells
+
+    def evaluate_territory_quality(move, next_x, next_y):
+        reachable_cells = count_reachable_space(next_x, next_y)
+        reachable_space = len(reachable_cells)
+        available_exits = count_available_exits(next_x, next_y)
+        contested_cells = estimate_contested_territory(reachable_cells, next_x, next_y)
+        danger_penalty = head_danger_scores.get((next_x, next_y), 0)
+
+        score = reachable_space
+        score -= contested_cells * 3
+        score -= danger_penalty
+
+        if reachable_space < my_length:
+            score -= (my_length - reachable_space) * 100
+        if available_exits <= 1:
+            score -= 75
+        elif available_exits >= 3:
+            score += 20
+
+        territory_details = {
+            "reachable": reachable_space,
+            "contested": contested_cells,
+            "exits": available_exits,
+            "danger_penalty": danger_penalty,
+            "score": score
+        }
+        print(f"Territory score for {move}: {territory_details}")
+
+        return score
 
     def score_safe_moves():
         move_scores = {}
         for move, is_safe in is_move_safe.items():
             if not is_safe:
-                move_scores[move] = -1
+                move_scores[move] = unsafe_score
                 continue
 
             dx, dy = directions[move]
             next_x = my_head["x"] + dx
             next_y = my_head["y"] + dy
             if maze[next_y + 1][next_x + 1] not in immediate_move_cells:
-                move_scores[move] = -1
+                move_scores[move] = unsafe_score
                 continue
 
-            reachable_space = flood_fill_space(next_x, next_y)
-            danger_penalty = head_danger_scores.get((next_x, next_y), 0)
-            move_scores[move] = max(0, reachable_space - danger_penalty)
+            move_scores[move] = evaluate_territory_quality(move, next_x, next_y)
 
         return move_scores
 
     def best_scored_safe_move(move_scores):
-        safe_moves = [move for move, score in move_scores.items() if score >= 0]
+        safe_moves = [move for move, score in move_scores.items() if score > unsafe_score]
         if not safe_moves:
             return None
 
@@ -403,11 +459,15 @@ def handle_standard_logic(game_state):
         if path:
             print(f"Path to target: {path}")
             path_move = path[0]  # Take the first step in the path
-            if move_scores.get(path_move, -1) >= 0:
+            best_move = best_scored_safe_move(move_scores)
+            path_score = move_scores.get(path_move, unsafe_score)
+            best_score = move_scores.get(best_move, unsafe_score) if best_move else unsafe_score
+
+            if path_score > unsafe_score and path_score + 40 >= best_score:
                 next_move = path_move
             else:
-                print(f"Path move {path_move} is no longer safe. Choosing the highest-scored safe move.")
-                next_move = best_scored_safe_move(move_scores)
+                print(f"Path move {path_move} scored {path_score}. Choosing higher territory score: {best_move} ({best_score}).")
+                next_move = best_move
                 if next_move is None:
                     print("No safe moves detected! Defaulting to 'down'.")
                     next_move = "down"
