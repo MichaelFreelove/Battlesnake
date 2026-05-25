@@ -193,6 +193,58 @@ def handle_standard_logic(game_state):
         "right": (1, 0)
     }
     passable_cells = [" ", "X", "T"]
+    immediate_move_cells = passable_cells + ["."]
+    my_length = len(my_body)
+
+    def position_key(position):
+        return (position["x"], position["y"])
+
+    def in_bounds(x, y):
+        return 0 <= x < board_width and 0 <= y < board_height
+
+    def opponent_legal_next_moves(opponent):
+        opponent_head = opponent["body"][0]
+        occupied_positions = set()
+
+        for snake in opponents:
+            body_segments = snake["body"]
+            if snake["id"] == opponent["id"] and len(body_segments) > 1:
+                body_segments = body_segments[:-1]
+
+            for segment in body_segments:
+                occupied_positions.add(position_key(segment))
+
+        legal_moves = []
+        for dx, dy in directions.values():
+            next_x = opponent_head["x"] + dx
+            next_y = opponent_head["y"] + dy
+            if in_bounds(next_x, next_y) and (next_x, next_y) not in occupied_positions:
+                legal_moves.append((next_x, next_y))
+
+        return legal_moves
+
+    def enemy_head_danger_scores():
+        danger_scores = {}
+
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+
+            opponent_length = len(opponent["body"])
+            if opponent_length > my_length:
+                penalty = 2000
+            elif opponent_length == my_length:
+                penalty = 1000
+            else:
+                penalty = 25
+
+            for square in opponent_legal_next_moves(opponent):
+                danger_scores[square] = max(danger_scores.get(square, 0), penalty)
+
+        return danger_scores
+
+    head_danger_scores = enemy_head_danger_scores()
+    print(f"Enemy Head Danger Scores: {head_danger_scores}")
 
     def flood_fill_space(start_x, start_y):
         visited = set()
@@ -227,11 +279,13 @@ def handle_standard_logic(game_state):
             dx, dy = directions[move]
             next_x = my_head["x"] + dx
             next_y = my_head["y"] + dy
-            if maze[next_y + 1][next_x + 1] not in passable_cells:
+            if maze[next_y + 1][next_x + 1] not in immediate_move_cells:
                 move_scores[move] = -1
                 continue
 
-            move_scores[move] = flood_fill_space(next_x, next_y)
+            reachable_space = flood_fill_space(next_x, next_y)
+            danger_penalty = head_danger_scores.get((next_x, next_y), 0)
+            move_scores[move] = max(0, reachable_space - danger_penalty)
 
         return move_scores
 
