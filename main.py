@@ -795,7 +795,237 @@ def handle_constrictor_logic(game_state):
 ####################
 def handle_royale_logic(game_state):
     print("Handling Royale Logic")
-    return handle_standard_logic(game_state)
+    is_move_safe = {"up": True, "down": True, "left": True, "right": True}
+    directions = {
+        "up": (0, 1),
+        "down": (0, -1),
+        "left": (-1, 0),
+        "right": (1, 0)
+    }
+
+    my_head = game_state["you"]["body"][0]
+    my_body = game_state["you"]["body"]
+    my_tail = my_body[-1]
+    my_health = game_state["you"]["health"]
+    my_length = len(my_body)
+    board = game_state["board"]
+    board_height = board["height"]
+    board_width = board["width"]
+    opponents = board["snakes"]
+    food_pellets = board["food"]
+    hazards = board.get("hazards", [])
+    hazard_cells = {(hazard["x"], hazard["y"]) for hazard in hazards}
+    food_cells = {(food["x"], food["y"]) for food in food_pellets}
+    unsafe_score = -100000
+
+    def position_key(position):
+        return (position["x"], position["y"])
+
+    def in_bounds(x, y):
+        return 0 <= x < board_width and 0 <= y < board_height
+
+    def is_hazard(x, y):
+        return (x, y) in hazard_cells
+
+    def get_next_position(move):
+        dx, dy = directions[move]
+        return my_head["x"] + dx, my_head["y"] + dy
+
+    def will_eat_after_move(next_x, next_y):
+        return (next_x, next_y) in food_cells
+
+    def build_blocked_cells(open_tail=False):
+        blocked_cells = set()
+
+        for segment in my_body[1:]:
+            if open_tail and segment["x"] == my_tail["x"] and segment["y"] == my_tail["y"]:
+                continue
+            blocked_cells.add(position_key(segment))
+
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+            for segment in opponent["body"]:
+                blocked_cells.add(position_key(segment))
+
+        return blocked_cells
+
+    def opponent_legal_next_moves(opponent):
+        opponent_head = opponent["body"][0]
+        occupied_positions = set()
+
+        for snake in opponents:
+            body_segments = snake["body"]
+            if snake["id"] == opponent["id"] and len(body_segments) > 1:
+                body_segments = body_segments[:-1]
+            for segment in body_segments:
+                occupied_positions.add(position_key(segment))
+
+        legal_moves = []
+        for dx, dy in directions.values():
+            next_x = opponent_head["x"] + dx
+            next_y = opponent_head["y"] + dy
+            if in_bounds(next_x, next_y) and (next_x, next_y) not in occupied_positions:
+                legal_moves.append((next_x, next_y))
+
+        return legal_moves
+
+    def enemy_head_danger_scores():
+        danger_scores = {}
+
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+
+            opponent_length = len(opponent["body"])
+            if opponent_length > my_length:
+                penalty = 2000
+            elif opponent_length == my_length:
+                penalty = 1000
+            else:
+                penalty = 25
+
+            for square in opponent_legal_next_moves(opponent):
+                danger_scores[square] = max(danger_scores.get(square, 0), penalty)
+
+        return danger_scores
+
+    def hazard_penalty(next_x, next_y):
+        if not is_hazard(next_x, next_y):
+            return 0
+        if my_health < 25:
+            return 450
+        if my_health <= 50:
+            return 250
+        return 120
+
+    def count_hazards_in_reachable_area(reachable_cells):
+        return sum(1 for cell in reachable_cells if cell in hazard_cells)
+
+    def count_reachable_space(start_x, start_y, open_tail=False):
+        visited = set()
+        fill_queue = queue.Queue()
+        fill_queue.put((start_x, start_y))
+        blocked_cells = build_blocked_cells(open_tail)
+
+        while not fill_queue.empty():
+            x, y = fill_queue.get()
+            if (x, y) in visited:
+                continue
+            if not in_bounds(x, y) or (x, y) in blocked_cells:
+                continue
+
+            visited.add((x, y))
+            for dx, dy in directions.values():
+                fill_queue.put((x + dx, y + dy))
+
+        return visited
+
+    def count_available_exits(x, y, open_tail=False):
+        exits = 0
+        blocked_cells = build_blocked_cells(open_tail)
+
+        for dx, dy in directions.values():
+            next_x = x + dx
+            next_y = y + dy
+            if in_bounds(next_x, next_y) and (next_x, next_y) not in blocked_cells and not is_hazard(next_x, next_y):
+                exits += 1
+
+        return exits
+
+    def nearest_food_distance(start_x, start_y):
+        if not food_pellets:
+            return None
+        return min(abs(start_x - food["x"]) + abs(start_y - food["y"]) for food in food_pellets)
+
+    def evaluate_royale_move(move):
+        next_x, next_y = get_next_position(move)
+        if not in_bounds(next_x, next_y):
+            return unsafe_score
+
+        open_tail = not will_eat_after_move(next_x, next_y)
+        blocked_cells = build_blocked_cells(open_tail)
+        if (next_x, next_y) in blocked_cells:
+            return unsafe_score
+
+        reachable_cells = count_reachable_space(next_x, next_y, open_tail)
+        reachable_space = len(reachable_cells)
+        reachable_hazards = count_hazards_in_reachable_area(reachable_cells)
+        safe_reachable_space = reachable_space - reachable_hazards
+        safe_exits = count_available_exits(next_x, next_y, open_tail)
+        direct_hazard_penalty = hazard_penalty(next_x, next_y)
+        hazard_area_penalty = reachable_hazards * (8 if my_health > 50 else 14)
+        enemy_penalty = head_danger_scores.get((next_x, next_y), 0)
+        food_distance = nearest_food_distance(next_x, next_y)
+
+        score = safe_reachable_space
+        score += safe_exits * 20
+        score -= direct_hazard_penalty
+        score -= hazard_area_penalty
+        score -= enemy_penalty
+
+        if reachable_space < my_length:
+            score -= (my_length - reachable_space) * 100
+        if safe_exits <= 1:
+            score -= 80
+        if food_distance is not None:
+            food_urgency = 120 if my_health < 35 else 60 if my_health <= 60 else 15
+            score += max(0, food_urgency - food_distance * 10)
+        if is_hazard(next_x, next_y) and food_distance is not None and food_distance <= 2:
+            score += 90
+        if is_hazard(next_x, next_y) and safe_reachable_space > my_length * 3:
+            score += 75
+
+        hazard_details = {
+            "position": (next_x, next_y),
+            "hazard": is_hazard(next_x, next_y),
+            "direct_penalty": direct_hazard_penalty,
+            "reachable": reachable_space,
+            "safe_reachable": safe_reachable_space,
+            "reachable_hazards": reachable_hazards,
+            "hazard_area_penalty": hazard_area_penalty,
+            "safe_exits": safe_exits,
+            "food_distance": food_distance,
+            "enemy_penalty": enemy_penalty,
+            "score": score
+        }
+        print(f"Royale score for {move}: {hazard_details}")
+
+        return score
+
+    head_danger_scores = enemy_head_danger_scores()
+    print(f"Royale Enemy Head Danger Scores: {head_danger_scores}")
+    print(f"Royale Hazards: {sorted(hazard_cells)}")
+
+    move_scores = {}
+    for move in is_move_safe:
+        move_scores[move] = evaluate_royale_move(move)
+
+    non_hazard_moves = [
+        move for move, score in move_scores.items()
+        if score > unsafe_score and not is_hazard(*get_next_position(move))
+    ]
+    hazard_moves = [
+        move for move, score in move_scores.items()
+        if score > unsafe_score and is_hazard(*get_next_position(move))
+    ]
+
+    if non_hazard_moves:
+        best_move = max(non_hazard_moves, key=lambda move: move_scores[move])
+        best_hazard_move = max(hazard_moves, key=lambda move: move_scores[move]) if hazard_moves else None
+        if best_hazard_move and move_scores[best_hazard_move] > move_scores[best_move] + 80:
+            print(f"Taking hazard move {best_hazard_move} because it has significantly better territory.")
+            best_move = best_hazard_move
+    elif hazard_moves:
+        best_move = max(hazard_moves, key=lambda move: move_scores[move])
+        print(f"No non-hazard moves available. Allowing hazard move: {best_move}")
+    else:
+        best_move = "down"
+        print("No safe Royale moves detected! Defaulting to 'down'.")
+
+    print(f"Royale Move {game_state['turn']} Scores: {move_scores}")
+    print(f"MOVE {game_state['turn']}: {best_move}")
+    return jsonify({"move": best_move})
 
 @app.route("/end", methods=["POST"])
 def end():
