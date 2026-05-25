@@ -184,6 +184,65 @@ def handle_standard_logic(game_state):
             is_move_safe["right"] = False
 
     ####################
+    ### Flood Fill Move Scoring ###
+    ####################
+    directions = {
+        "up": (0, 1),
+        "down": (0, -1),
+        "left": (-1, 0),
+        "right": (1, 0)
+    }
+    passable_cells = [" ", "X", "T"]
+
+    def flood_fill_space(start_x, start_y):
+        visited = set()
+        fill_queue = queue.Queue()
+        fill_queue.put((start_x, start_y))
+        free_space = 0
+
+        while not fill_queue.empty():
+            x, y = fill_queue.get()
+            if (x, y) in visited:
+                continue
+            if not (0 <= x < board_width and 0 <= y < board_height):
+                continue
+            if maze[y + 1][x + 1] not in passable_cells:
+                continue
+
+            visited.add((x, y))
+            free_space += 1
+
+            for dx, dy in directions.values():
+                fill_queue.put((x + dx, y + dy))
+
+        return free_space
+
+    def score_safe_moves():
+        move_scores = {}
+        for move, is_safe in is_move_safe.items():
+            if not is_safe:
+                move_scores[move] = -1
+                continue
+
+            dx, dy = directions[move]
+            next_x = my_head["x"] + dx
+            next_y = my_head["y"] + dy
+            if maze[next_y + 1][next_x + 1] not in passable_cells:
+                move_scores[move] = -1
+                continue
+
+            move_scores[move] = flood_fill_space(next_x, next_y)
+
+        return move_scores
+
+    def best_scored_safe_move(move_scores):
+        safe_moves = [move for move, score in move_scores.items() if score >= 0]
+        if not safe_moves:
+            return None
+
+        return max(safe_moves, key=lambda move: move_scores[move])
+
+    ####################
     ### Determine Target ###
     ####################
     target_food = None
@@ -253,16 +312,13 @@ def handle_standard_logic(game_state):
     elif target_food:
         maze[target_food["y"] + 1][target_food["x"] + 1] = "T"
 
+    move_scores = score_safe_moves()
+    print(f"Standard Move {game_state['turn']} Scores: {move_scores}")
+
     ####################
     ### Use BFS to Find Path ###
     ####################
     def bfs_path(start, target, maze):
-        directions = {
-            "up": (0, 1),
-            "down": (0, -1),
-            "left": (-1, 0),
-            "right": (1, 0)
-        }
         bfs_queue = queue.Queue()
         bfs_queue.put((start, []))  # (current_position, path_to_position)
         visited = set()
@@ -292,7 +348,15 @@ def handle_standard_logic(game_state):
 
         if path:
             print(f"Path to target: {path}")
-            next_move = path[0]  # Take the first step in the path
+            path_move = path[0]  # Take the first step in the path
+            if move_scores.get(path_move, -1) >= 0:
+                next_move = path_move
+            else:
+                print(f"Path move {path_move} is no longer safe. Choosing the highest-scored safe move.")
+                next_move = best_scored_safe_move(move_scores)
+                if next_move is None:
+                    print("No safe moves detected! Defaulting to 'down'.")
+                    next_move = "down"
 
             # Mark the path on the maze
             current_pos = start_pos
@@ -309,23 +373,15 @@ def handle_standard_logic(game_state):
                 # Ensure current_pos is a tuple and mark the path
                 maze[current_pos[1] + 1][current_pos[0] + 1] = "P"
         else:
-            print("No path to target found. Choosing a random safe move.")
-            # Filter out unsafe moves
-            safe_moves = [move for move, is_safe in is_move_safe.items() if is_safe]
-            print(f"Safe moves: {safe_moves}")
-            if safe_moves:
-                next_move = random.choice(safe_moves)
-            else:
+            print("No path to target found. Choosing the highest-scored safe move.")
+            next_move = best_scored_safe_move(move_scores)
+            if next_move is None:
                 print("No safe moves detected! Defaulting to 'down'.")
                 next_move = "down"  # Default to "down" if no safe moves are available
     else:
-        print("No target found. Choosing a random safe move.")
-        # Filter out unsafe moves
-        safe_moves = [move for move, is_safe in is_move_safe.items() if is_safe]
-        print(f"Safe moves: {safe_moves}")
-        if safe_moves:
-            next_move = random.choice(safe_moves)
-        else:
+        print("No target found. Choosing the highest-scored safe move.")
+        next_move = best_scored_safe_move(move_scores)
+        if next_move is None:
             print("No safe moves detected! Defaulting to 'down'.")
             next_move = "down"  # Default to "down" if no safe moves are available
 
