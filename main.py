@@ -348,6 +348,109 @@ def handle_standard_logic(game_state):
 
         return contested_cells
 
+    def build_enemy_blocked_cells(opponent, extra_blocked=None):
+        blocked_cells = set(extra_blocked or [])
+
+        for snake in opponents:
+            body_segments = snake["body"]
+            if snake["id"] == opponent["id"]:
+                body_segments = body_segments[1:-1]
+
+            for segment in body_segments:
+                blocked_cells.add(position_key(segment))
+
+        for segment in my_body[1:]:
+            blocked_cells.add(position_key(segment))
+
+        return blocked_cells
+
+    def estimate_enemy_territory(opponent, extra_blocked=None):
+        enemy_head = opponent["body"][0]
+        blocked_cells = build_enemy_blocked_cells(opponent, extra_blocked)
+        visited = set()
+        fill_queue = queue.Queue()
+        fill_queue.put(position_key(enemy_head))
+
+        while not fill_queue.empty():
+            x, y = fill_queue.get()
+            if (x, y) in visited:
+                continue
+            if not in_bounds(x, y) or (x, y) in blocked_cells:
+                continue
+            if maze[y + 1][x + 1] == "#":
+                continue
+
+            visited.add((x, y))
+            for dx, dy in directions.values():
+                fill_queue.put((x + dx, y + dy))
+
+        return visited
+
+    def detect_narrow_corridors(opponent, extra_blocked=None):
+        enemy_head = opponent["body"][0]
+        blocked_cells = build_enemy_blocked_cells(opponent, extra_blocked)
+        exits = 0
+
+        for dx, dy in directions.values():
+            next_x = enemy_head["x"] + dx
+            next_y = enemy_head["y"] + dy
+            if in_bounds(next_x, next_y) and (next_x, next_y) not in blocked_cells and maze[next_y + 1][next_x + 1] != "#":
+                exits += 1
+
+        return exits
+
+    def evaluate_cutoff_opportunity(opponent, next_x, next_y):
+        current_territory = estimate_enemy_territory(opponent)
+        candidate_territory = estimate_enemy_territory(opponent, {(next_x, next_y)})
+        current_exits = detect_narrow_corridors(opponent)
+        candidate_exits = detect_narrow_corridors(opponent, {(next_x, next_y)})
+        territory_reduction = len(current_territory) - len(candidate_territory)
+        exit_reduction = current_exits - candidate_exits
+
+        cutoff_score = max(0, territory_reduction) * 2
+        if exit_reduction > 0:
+            cutoff_score += exit_reduction * 35
+        if candidate_exits <= 1:
+            cutoff_score += 45
+        if len(candidate_territory) < len(opponent["body"]) * 2:
+            cutoff_score += 55
+
+        cutoff_details = {
+            "opponent": opponent.get("name", opponent["id"]),
+            "current_territory": len(current_territory),
+            "candidate_territory": len(candidate_territory),
+            "current_exits": current_exits,
+            "candidate_exits": candidate_exits,
+            "score": cutoff_score
+        }
+        print(f"Cutoff opportunity for {opponent['id']}: {cutoff_details}")
+
+        return cutoff_score
+
+    def score_aggressive_control(move, next_x, next_y, my_reachable_space, my_available_exits):
+        if my_reachable_space < my_length * 2 or my_available_exits <= 1:
+            print(f"Aggression skipped for {move}: not enough escape space ({my_reachable_space}, exits {my_available_exits}).")
+            return 0
+        if head_danger_scores.get((next_x, next_y), 0) >= 1000:
+            print(f"Aggression skipped for {move}: head-to-head danger at {(next_x, next_y)}.")
+            return 0
+
+        aggression_score = 0
+        for opponent in opponents:
+            if opponent["id"] == game_state["you"]["id"]:
+                continue
+            if len(opponent["body"]) >= my_length:
+                continue
+
+            cutoff_score = evaluate_cutoff_opportunity(opponent, next_x, next_y)
+            distance_to_enemy = abs(next_x - opponent["body"][0]["x"]) + abs(next_y - opponent["body"][0]["y"])
+            pressure_bonus = max(0, 20 - distance_to_enemy * 5)
+            aggression_score += cutoff_score + pressure_bonus
+
+        aggression_score = min(120, aggression_score)
+        print(f"Aggression score for {move}: {aggression_score}")
+        return aggression_score
+
     def evaluate_territory_quality(move, next_x, next_y):
         open_tail = not will_eat_after_move(next_x, next_y)
         if is_own_tail_safe(next_x, next_y):
@@ -497,6 +600,10 @@ def handle_standard_logic(game_state):
                 continue
 
             move_scores[move] = evaluate_territory_quality(move, next_x, next_y)
+            open_tail = not will_eat_after_move(next_x, next_y)
+            reachable_cells = count_reachable_space(next_x, next_y, open_tail)
+            available_exits = count_available_exits(next_x, next_y, open_tail)
+            move_scores[move] += score_aggressive_control(move, next_x, next_y, len(reachable_cells), available_exits)
             if (next_x, next_y) in food_scores:
                 move_scores[move] += food_scores[(next_x, next_y)] * 0.25
 
