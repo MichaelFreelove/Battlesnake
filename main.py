@@ -12,9 +12,9 @@ def info():
     return jsonify({
         "apiversion": "1",
         "author": "",  # TODO: Your Battlesnake Username
-        "color": "#888888",  # TODO: Choose color
+        "color": "#4169E1",  # TODO: Choose color
         "head": "missile",  # TODO: Choose head
-        "tail": "default",  # TODO: Choose tail
+        "tail": "coffee",  # TODO: Choose tail
     })
 
 @app.route("/start", methods=["POST"])
